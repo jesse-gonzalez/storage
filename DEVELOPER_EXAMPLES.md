@@ -2,6 +2,8 @@
 
 This document provides minimal footprint examples optimized for developer desktop testing. These examples use the smallest possible datasets while still demonstrating the full benchmark workflow.
 
+![](./task-walkthrough.gif)
+
 ## Quick Start (Minimal Footprint)
 
 The following examples use **ResNet-50** which has the smallest data footprint (~7GB for development vs 477GB for U-Net3D).
