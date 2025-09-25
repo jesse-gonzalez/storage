@@ -1,0 +1,135 @@
+version: '3'
+
+vars:
+  IMAGE_NAME: mlpstorage
+  IMAGE_TAG: '{{default "latest" .IMAGE_TAG}}'
+  REGISTRY: '{{default "" .REGISTRY}}'
+  FULL_IMAGE_NAME: '{{if .REGISTRY}}{{.REGISTRY}}/{{end}}{{.IMAGE_NAME}}:{{.IMAGE_TAG}}'
+
+tasks:
+  build:
+    desc: Build the MLPerf Storage Docker image
+    cmds:
+      - docker build -t {{.IMAGE_NAME}}:{{.IMAGE_TAG}} .
+      - echo "Built image {{.IMAGE_NAME}}:{{.IMAGE_TAG}}"
+
+  tag:
+    desc: Tag the Docker image (requires REGISTRY and optionally IMAGE_TAG)
+    cmds:
+      - |
+        if [ -z "{{.REGISTRY}}" ]; then
+          echo "Error: REGISTRY variable is required for tagging"
+          echo "Usage: task tag REGISTRY=your-registry.com [IMAGE_TAG=tag]"
+          exit 1
+        fi
+      - docker tag {{.IMAGE_NAME}}:{{.IMAGE_TAG}} {{.FULL_IMAGE_NAME}}
+      - echo "Tagged image as {{.FULL_IMAGE_NAME}}"
+
+  push:
+    desc: Push the Docker image to registry (requires REGISTRY and optionally IMAGE_TAG)
+    deps: [tag]
+    cmds:
+      - |
+        if [ -z "{{.REGISTRY}}" ]; then
+          echo "Error: REGISTRY variable is required for pushing"
+          echo "Usage: task push REGISTRY=your-registry.com [IMAGE_TAG=tag]"
+          exit 1
+        fi
+      - docker push {{.FULL_IMAGE_NAME}}
+      - echo "Pushed image {{.FULL_IMAGE_NAME}}"
+
+  run:
+    desc: Run the MLPerf Storage container interactively
+    cmds:
+      - |
+        docker run -it --rm \
+          -v $(pwd):/workspace \
+          -v $(pwd)/data:/workspace/data \
+          -v $(pwd)/results:/workspace/results \
+          --user $(id -u):$(id -g) \
+          --network host \
+          {{.IMAGE_NAME}}:{{.IMAGE_TAG}} /bin/bash
+
+  run-cmd:
+    desc: "Run a specific command in the container (usage: task run-cmd CMD=\"mlpstorage --help\")"
+    cmds:
+      - |
+        if [ -z "{{.CMD}}" ]; then
+          echo "Error: CMD variable is required"
+          echo "Usage: task run-cmd CMD='mlpstorage --help'"
+          exit 1
+        fi
+        docker run --rm \
+          -v $(pwd):/workspace \
+          -v $(pwd)/data:/workspace/data \
+          -v $(pwd)/results:/workspace/results \
+          --user $(id -u):$(id -g) \
+          --network host \
+          {{.IMAGE_NAME}}:{{.IMAGE_TAG}} {{.CMD}}
+
+  compose-build:
+    desc: Build using docker-compose
+    cmds:
+      - docker-compose build
+      - echo "Built using docker-compose"
+
+  compose-run:
+    desc: Run interactively using docker-compose
+    cmds:
+      - docker-compose run --rm mlpstorage
+
+  compose-up:
+    desc: Start services using docker-compose in detached mode
+    cmds:
+      - docker-compose up -d
+
+  compose-down:
+    desc: Stop and remove containers using docker-compose
+    cmds:
+      - docker-compose down
+
+  clean:
+    desc: Remove the Docker image and clean up
+    cmds:
+      - docker rmi {{.IMAGE_NAME}}:{{.IMAGE_TAG}} 2>/dev/null || true
+      - |
+        if [ -n "{{.REGISTRY}}" ]; then
+          docker rmi {{.FULL_IMAGE_NAME}} 2>/dev/null || true
+        fi
+      - docker system prune -f
+      - echo "Cleaned up Docker images and system"
+
+  build-and-run:
+    desc: Build and run the container in one step
+    deps: [build]
+    cmds:
+      - task: run
+
+  build-and-push:
+    desc: Build, tag, and push to registry (requires REGISTRY)
+    deps: [build]
+    cmds:
+      - task: push
+        vars:
+          REGISTRY: '{{.REGISTRY}}'
+          IMAGE_TAG: '{{.IMAGE_TAG}}'
+
+  help:
+    desc: Show available tasks and usage examples
+    cmds:
+      - echo "Available tasks:"
+      - task --list
+      - echo ""
+      - echo "Usage examples:"
+      - echo "  task build                                    # Build with default tag 'latest'"
+      - echo "  task build IMAGE_TAG=v2.0                     # Build with custom tag"
+      - echo "  task tag REGISTRY=docker.io/myuser            # Tag for Docker Hub"
+      - echo "  task push REGISTRY=ghcr.io/myorg IMAGE_TAG=v1 # Push to GitHub Container Registry"
+      - echo "  task run                                      # Run interactively"
+      - echo "  task run-cmd CMD='mlpstorage --version'       # Run specific command"
+      - echo "  task build-and-push REGISTRY=myregistry.com  # Build and push in one step"
+
+  default:
+    desc: Show help by default
+    cmds:
+      - task: help

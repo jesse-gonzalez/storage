@@ -1,0 +1,26 @@
+version: '3.8'
+
+services:
+  mlpstorage:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: mlpstorage-benchmark
+    volumes:
+      # Mount the workspace to allow live editing
+      - .:/workspace
+      # Mount additional directories for data and results if needed
+      - ./data:/workspace/data
+      - ./results:/workspace/results
+    working_dir: /workspace
+    # Override default user to maintain file permissions
+    user: "${UID:-1000}:${GID:-1000}"
+    environment:
+      - PYTHONPATH=/workspace
+    # Keep container running for interactive use
+    stdin_open: true
+    tty: true
+    # Override entrypoint for interactive shell
+    entrypoint: ["/bin/bash"]
+    # Network mode for MPI communication
+    network_mode: host
