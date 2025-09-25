@@ -7,6 +7,7 @@ This directory contains Docker configuration files to run the MLPerf Storage ben
 - `Dockerfile`: Multi-stage build for Ubuntu 24.04 with all dependencies
 - `docker-compose.yml`: Docker Compose configuration with volume mounts
 - `Taskfile.yml`: Task automation for building, running, and managing Docker operations
+- `DEVELOPER_EXAMPLES.md`: Minimal footprint examples optimized for developer desktops
 - `.dockerignore`: Excludes unnecessary files from Docker build context
 
 ## Quick Start
@@ -69,7 +70,23 @@ docker run --rm \
 
 ## Usage Examples
 
-Once inside the container, you can run the benchmark commands as described in the main README:
+Once inside the container, you can run the benchmark commands. For **developer desktop testing**, see `DEVELOPER_EXAMPLES.md` for minimal footprint examples.
+
+### Quick Developer Test (Minimal ~7GB)
+
+```bash
+# Complete workflow using Taskfile (recommended)
+task dev-test
+
+# Or run individual commands for ResNet-50 
+# Generate minimal dataset (50 files, ~7GB)
+mlpstorage training datagen --hosts 127.0.0.1 --model resnet50 --num-processes 1 --data-dir /workspace/data/resnet50_dev --results-dir /workspace/results --param dataset.num_files_train=50 --open
+
+# Run benchmark
+mlpstorage training run --hosts 127.0.0.1 --num-client-hosts 1 --client-host-memory-in-gb 4 --num-accelerators 1 --accelerator-type h100 --model resnet50 --data-dir /workspace/data/resnet50_dev --results-dir /workspace/results --param dataset.num_files_train=50 --open
+```
+
+### Full Examples (Production Scale)
 
 ```bash
 # Calculate dataset size
@@ -97,6 +114,17 @@ mlpstorage training run --hosts 127.0.0.1 --num-client-hosts 1 --client-host-mem
 - File permissions are preserved through user mapping in docker-compose
 - Data and results directories are created and mounted for persistence
 - All Python dependencies are installed in a virtual environment at `/opt/venv`
+
+### Expected Warnings
+
+During data generation, you may see TensorFlow warnings like:
+
+```text
+UserWarning: unable to load libtensorflow_io_plugins.so
+UserWarning: file system plugins are not loaded
+```
+
+These are **non-fatal warnings** related to TensorFlow I/O plugins in the containerized environment and can be safely ignored. The benchmark will function correctly despite these warnings.
 
 ## Multi-Host Setup
 

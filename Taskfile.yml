@@ -9,9 +9,17 @@ vars:
 tasks:
   build:
     desc: Build the MLPerf Storage Docker image
+    sources:
+      - Dockerfile
+      - pyproject.toml
+      - mlpstorage/**/*.py
+    generates:
+      - .docker-build-{{.IMAGE_TAG}}
+    method: timestamp
     cmds:
-      - docker build -t {{.IMAGE_NAME}}:{{.IMAGE_TAG}} .
+      - docker build -t {{.IMAGE_NAME}}:{{.IMAGE_TAG}} --load .
       - echo "Built image {{.IMAGE_NAME}}:{{.IMAGE_TAG}}"
+      - touch .docker-build-{{.IMAGE_TAG}}
 
   tag:
     desc: Tag the Docker image (requires REGISTRY and optionally IMAGE_TAG)
@@ -96,6 +104,7 @@ tasks:
         if [ -n "{{.REGISTRY}}" ]; then
           docker rmi {{.FULL_IMAGE_NAME}} 2>/dev/null || true
         fi
+      - rm -f .docker-build-*
       - docker system prune -f
       - echo "Cleaned up Docker images and system"
 
@@ -114,20 +123,140 @@ tasks:
           REGISTRY: '{{.REGISTRY}}'
           IMAGE_TAG: '{{.IMAGE_TAG}}'
 
+  dev-test:
+    desc: Run the complete developer test workflow (minimal footprint ~7GB, ~3 min)
+    deps: [build]
+    cmds:
+      - echo "=== MLPerf Storage Developer Test ==="
+      - "echo 'Model: ResNet-50 | Files: 50 | Size: ~7GB | Time: ~3 min'"
+      - task: dev-datagen
+      - task: dev-run  
+      - task: dev-report
+      - echo "=== Test Complete ==="
+      - 'echo "Results: $(pwd)/results | Data: $(du -sh data/resnet50_dev 2>/dev/null | cut -f1 || echo \"Not found\")"'
+
+  dev-datagen:
+    desc: Generate minimal development dataset (ResNet-50, 50 files, ~7GB)
+    deps: [build]
+    cmds:
+      - echo "Generating minimal dataset (50 files, ~7GB)..."
+      - mkdir -p data results
+      - |
+        docker run --rm \
+          -v $(pwd):/workspace \
+          -v $(pwd)/data:/workspace/data \
+          -v $(pwd)/results:/workspace/results \
+          --user $(id -u):$(id -g) --network host \
+          {{.IMAGE_NAME}}:{{.IMAGE_TAG}} \
+          mlpstorage training datagen \
+            --hosts 127.0.0.1 \
+            --model resnet50 \
+            --num-processes 1 \
+            --data-dir /workspace/data/resnet50_dev \
+            --results-dir /workspace/results \
+            --param dataset.num_files_train=50 \
+            --open
+
+  dev-run:
+    desc: Run minimal development benchmark (requires dev-datagen first)
+    deps: [build]
+    cmds:
+      - echo "Running benchmark (1 accelerator, 4GB memory)..."
+      - |
+        docker run --rm \
+          -v $(pwd):/workspace \
+          -v $(pwd)/data:/workspace/data \
+          -v $(pwd)/results:/workspace/results \
+          --user $(id -u):$(id -g) --network host \
+          {{.IMAGE_NAME}}:{{.IMAGE_TAG}} \
+          mlpstorage training run \
+            --hosts 127.0.0.1 \
+            --num-client-hosts 1 \
+            --client-host-memory-in-gb 4 \
+            --num-accelerators 1 \
+            --accelerator-type h100 \
+            --model resnet50 \
+            --data-dir /workspace/data/resnet50_dev \
+            --results-dir /workspace/results \
+            --param dataset.num_files_train=50 \
+            --open
+
+  dev-report:
+    desc: Generate development benchmark report
+    deps: [build]
+    cmds:
+      - echo "Generating report..."
+      - |
+        docker run --rm \
+          -v $(pwd):/workspace \
+          -v $(pwd)/results:/workspace/results \
+          --user $(id -u):$(id -g) --network host \
+          {{.IMAGE_NAME}}:{{.IMAGE_TAG}} \
+          mlpstorage reports reportgen \
+            --results-dir /workspace/results
+
+  dev-datasize:
+    desc: Calculate minimum dataset size for development configuration
+    deps: [build]
+    cmds:
+      - echo "Calculating dataset size for development config..."
+      - |
+        docker run --rm \
+          -v $(pwd):/workspace \
+          -v $(pwd)/results:/workspace/results \
+          --user $(id -u):$(id -g) --network host \
+          {{.IMAGE_NAME}}:{{.IMAGE_TAG}} \
+          mlpstorage training datasize \
+            -m resnet50 \
+            --client-host-memory-in-gb 4 \
+            --num-client-hosts 1 \
+            --max-accelerators 1 \
+            --accelerator-type h100 \
+            --results-dir /workspace/results \
+            --open
+
+  dev-clean:
+    desc: Clean up generated development data and results
+    cmds:
+      - echo "Cleaning up development data..."
+      - |
+        if [ -d "data/resnet50_dev" ]; then
+          echo "Removing data/resnet50_dev ($(du -sh data/resnet50_dev 2>/dev/null | cut -f1 || echo '?'))"
+          rm -rf data/resnet50_dev
+        fi
+      - |
+        if [ -d "results" ]; then
+          echo "Removing results directory ($(du -sh results 2>/dev/null | cut -f1 || echo '?'))"
+          rm -rf results
+        fi
+      - echo "Cleanup complete"
+
   help:
+    silent: true
     desc: Show available tasks and usage examples
     cmds:
       - echo "Available tasks:"
       - task --list
       - echo ""
       - echo "Usage examples:"
-      - echo "  task build                                    # Build with default tag 'latest'"
-      - echo "  task build IMAGE_TAG=v2.0                     # Build with custom tag"
-      - echo "  task tag REGISTRY=docker.io/myuser            # Tag for Docker Hub"
-      - echo "  task push REGISTRY=ghcr.io/myorg IMAGE_TAG=v1 # Push to GitHub Container Registry"
-      - echo "  task run                                      # Run interactively"
-      - echo "  task run-cmd CMD='mlpstorage --version'       # Run specific command"
-      - echo "  task build-and-push REGISTRY=myregistry.com  # Build and push in one step"
+      - echo ""
+      - echo "Developer Testing:"
+      - "echo '  task dev-test                                 # Complete workflow (~7GB, 3 min)'"
+      - "echo '  task dev-datagen                              # Generate minimal dataset only'"
+      - "echo '  task dev-run                                  # Run benchmark only'"
+      - "echo '  task dev-report                               # Generate report only'"
+      - "echo '  task dev-datasize                             # Calculate dataset size'"
+      - "echo '  task dev-clean                                # Clean up generated data'"
+      - echo ""
+      - echo "Docker Operations:"
+      - "echo '  task build                                    # Build with default tag'"
+      - "echo '  task run                                      # Run interactively'"
+      - "echo '  task run-cmd CMD=\"mlpstorage --version\"       # Run specific command'"
+      - echo ""
+      - echo "Registry Operations:"
+      - "echo '  task tag REGISTRY=docker.io/user             # Tag for registry'"
+      - "echo '  task push REGISTRY=ghcr.io/org               # Push to registry'"
+      - "echo '  task build-and-push REGISTRY=registry.com    # Build and push'"
 
   default:
     desc: Show help by default
